@@ -16,6 +16,7 @@ if MohoMCP_Server.server == nil then
 	MohoMCP_Server.isLoaded = false
 	MohoMCP_Server.BASE_DIR = ""
 	MohoMCP_Server.pollActive = false
+	MohoMCP_Server.moho = nil
 end
 
 function MohoMCP_Server:Name()
@@ -23,11 +24,11 @@ function MohoMCP_Server:Name()
 end
 
 function MohoMCP_Server:Version()
-	return "0.1.0"
+	return "0.2.0"
 end
 
 function MohoMCP_Server:Description()
-	return "Start/stop the MohoMCP server for LLM integration (Claude Desktop, Claude Code)"
+	return "Start or stop the MohoMCP server for AI clients"
 end
 
 function MohoMCP_Server:Creator()
@@ -53,6 +54,12 @@ local function getScriptDir()
 	path = path:gsub("\\", "/")
 	local dir = path:match("^(.*/)")
 	return dir or "./"
+end
+
+--- Runtime modules live under Scripts/Modules so Moho does not expose every
+--- implementation file as a command in the Scripts menu.
+local function getRuntimeDir()
+	return getScriptDir() .. "../../Modules/MohoMCP/"
 end
 
 --- Add the plugin directory to Lua's package.path.
@@ -113,6 +120,7 @@ local function loadModules(baseDir)
 		{ name = "moho_mcp.tools.animation", methods = { "animation.getKeyframes", "animation.getFrameState", "animation.setKeyframe", "animation.deleteKeyframe", "animation.setInterpolation" } },
 		{ name = "moho_mcp.tools.mesh",      methods = { "mesh.getPoints", "mesh.getShapes" } },
 		{ name = "moho_mcp.tools.batch",     methods = { "batch.execute" } },
+		{ name = "moho_mcp.tools.rig",       methods = { "rig.createCutout" } },
 	}
 
 	for _, toolDef in ipairs(toolModules) do
@@ -137,65 +145,76 @@ local function loadModules(baseDir)
 	return true
 end
 
+local MODULE_NAMES = {
+	"json",
+	"moho_mcp.protocol",
+	"moho_mcp.validator",
+	"moho_mcp.server",
+	"moho_mcp.tools.document",
+	"moho_mcp.tools.layer",
+	"moho_mcp.tools.bone",
+	"moho_mcp.tools.animation",
+	"moho_mcp.tools.mesh",
+	"moho_mcp.tools.batch",
+	"moho_mcp.tools.rig",
+}
+
+--- Forget runtime modules after a stop so the next start loads edited Lua files.
+--- This makes the normal development loop: install once, edit, Stop, Start.
+local function unloadModules()
+	for _, moduleName in ipairs(MODULE_NAMES) do
+		package.loaded[moduleName] = nil
+	end
+	_G.json = nil
+	MohoMCP_Server.server = nil
+	MohoMCP_Server.isLoaded = false
+end
+
 -- **************************************************
--- Continuous polling by wrapping tool DrawMe callbacks
+-- Polling through Moho's application-wide update table
 -- **************************************************
 
---- Inject polling into existing MOHO tool scripts.
---- MOHO calls DrawMe on the active tool every viewport repaint,
---- so wrapping it gives us a reliable, frequent polling hook
---- regardless of which tool the user has selected.
-local function installDrawMeHooks()
-	if MohoMCP_Server._hooksInstalled then
+local function pollFromUpdateTable(moho)
+	if not MohoMCP_Server.pollActive or not MohoMCP_Server.server or MohoMCP_Server._polling then
 		return
 	end
-
-	-- List of known MOHO tool globals to wrap
-	local toolNames = {
-		"LM_TransformPoints", "LM_SelectPoints", "LM_AddPoint", "LM_Curvature",
-		"LM_Freehand", "LM_Shape", "LM_DeleteEdge", "LM_Magnet",
-		"LM_Brush", "LM_Eraser", "LM_PointReduction", "LM_ScatterBrush",
-		"LM_PerspectivePoints", "LM_ShearPoints", "LM_BendPoints", "LM_Noise",
-		"LM_SelectShape", "LM_CreateShape", "LM_PaintBucket", "LM_DeleteShape",
-		"LM_LineWidth", "LM_HideEdge", "LM_CurveExposure", "LM_CurveProfile",
-		"LM_SelectBone", "LM_AddBone", "LM_TransformBone", "LM_ManipulateBones",
-		"LM_ReparentBone", "LM_BoneStrength", "LM_BoneGroups",
-		"LM_BindLayer", "LM_BindPoints", "LM_OffsetBone",
-		"LM_TransformLayer", "LM_SetOrigin",
-		"LM_FollowCurve", "LM_RotateLayerXY", "LM_ShearLayer",
-		"LM_TrackCamera", "LM_ZoomCamera", "LM_RollCamera", "LM_PanTiltCamera",
-		"LM_PanWorkspace", "LM_ZoomWorkspace", "LM_RotateWorkspace", "LM_OrbitWorkspace",
-	}
-
-	local wrapped = 0
-	for _, name in ipairs(toolNames) do
-		local tool = _G[name]
-		if tool and tool.DrawMe then
-			local original = tool.DrawMe
-			tool.DrawMe = function(self, moho, view)
-				-- Poll for MohoMCP requests (wrapped in pcall to survive crashes)
-				if MohoMCP_Server.pollActive and MohoMCP_Server.server then
-					local pollOk, pollErr = pcall(MohoMCP_Server.server.poll, moho)
-					if not pollOk then
-						print("[MohoMCP] Poll error (non-fatal): " .. tostring(pollErr))
-					end
-					-- Self-sustaining timer: call UpdateUI() throttled to ~4Hz
-					-- This triggers another DrawMe, keeping the poll loop alive
-					-- even when the user isn't interacting with the viewport
-					local now = os.clock()
-					if not MohoMCP_Server._lastPollTime or (now - MohoMCP_Server._lastPollTime) > 0.25 then
-						MohoMCP_Server._lastPollTime = now
-						pcall(function() moho:UpdateUI() end)
-					end
-				end
-				return original(self, moho, view)
-			end
-			wrapped = wrapped + 1
+	-- Some Moho menu refreshes call IsEnabled without a ScriptInterface.
+	-- Keep the valid reference received by Run and use it for those callbacks.
+	moho = moho or MohoMCP_Server.moho
+	local helper = nil
+	if not moho or not moho.document then
+		local helperOk, helperOrError = pcall(function()
+			return MOHO.ScriptInterfaceHelper:new_local()
+		end)
+		if helperOk and helperOrError then
+			helper = helperOrError
+			moho = helper:MohoObject()
 		end
 	end
+	if not moho then
+		if helper then helper:delete() end
+		return
+	end
+	MohoMCP_Server._polling = true
+	local pollOk, pollErr = pcall(MohoMCP_Server.server.poll, moho)
+	MohoMCP_Server._polling = false
+	if helper then helper:delete() end
+	if not pollOk then
+		print("[MohoMCP] Poll error (non-fatal): " .. tostring(pollErr))
+	end
+end
 
-	MohoMCP_Server._hooksInstalled = true
-	print("[MohoMCP] Injected polling into " .. wrapped .. " tool DrawMe callbacks")
+local function installUpdateHook()
+	if MohoMCP_Server._updateHookInstalled then
+		return
+	end
+	if type(MOHO.UpdateTable) ~= "table" then
+		MOHO.UpdateTable = {}
+	end
+	table.insert(MOHO.UpdateTable, pollFromUpdateTable)
+	MohoMCP_Server._updateHook = pollFromUpdateTable
+	MohoMCP_Server._updateHookInstalled = true
+	print("[MohoMCP] Registered application update hook")
 end
 
 -- **************************************************
@@ -205,12 +224,10 @@ end
 -- **************************************************
 
 function MohoMCP_Server:IsEnabled(moho)
-	if MohoMCP_Server.pollActive and MohoMCP_Server.server then
-		local pollOk, pollErr = pcall(MohoMCP_Server.server.poll, moho)
-		if not pollOk then
-			print("[MohoMCP] Poll error (non-fatal): " .. tostring(pollErr))
-		end
+	if moho then
+		MohoMCP_Server.moho = moho
 	end
+	pollFromUpdateTable(moho)
 	return true
 end
 
@@ -219,9 +236,12 @@ end
 -- **************************************************
 
 function MohoMCP_Server:Run(moho)
+	-- Run always receives a valid ScriptInterface. Preserve it for callbacks
+	-- where Moho omits the argument.
+	MohoMCP_Server.moho = moho
 	-- Determine base directory on first run
 	if MohoMCP_Server.BASE_DIR == "" then
-		MohoMCP_Server.BASE_DIR = getScriptDir()
+		MohoMCP_Server.BASE_DIR = getRuntimeDir()
 	end
 
 	-- Load modules on first run
@@ -244,6 +264,7 @@ function MohoMCP_Server:Run(moho)
 		-- Stop the server
 		srv.stop()
 		MohoMCP_Server.pollActive = false
+		unloadModules()
 		LM.GUI.Alert(LM.GUI.ALERT_INFO,
 			"MohoMCP Server stopped.",
 			nil, nil,
@@ -254,14 +275,14 @@ function MohoMCP_Server:Run(moho)
 		local ok, err = srv.start()
 		if ok then
 			MohoMCP_Server.pollActive = true
-			-- Hook into all tool DrawMe callbacks for continuous polling
-			installDrawMeHooks()
+			-- Use Moho's application-wide update callback instead of patching tools.
+			installUpdateHook()
 			-- Do an initial poll with the current moho reference
 			srv.poll(moho)
 			LM.GUI.Alert(LM.GUI.ALERT_INFO,
 				"MohoMCP Server started!",
 				"IPC directory: " .. srv.getInfo().ipcDir,
-				"Use Claude Desktop or Claude Code to connect.",
+				"Start your MCP client to connect.",
 				MOHO.Localize("/Scripts/OK=OK"),
 				nil, nil)
 		else

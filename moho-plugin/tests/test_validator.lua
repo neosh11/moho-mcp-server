@@ -47,6 +47,10 @@ test("isAllowed: mesh.getShapes", function()
     assert_true(validator.isAllowed("mesh.getShapes"))
 end)
 
+test("isAllowed: rig.createCutout", function()
+    assert_true(validator.isAllowed("rig.createCutout"))
+end)
+
 test("isAllowed: unknown method returns false", function()
     assert_false(validator.isAllowed("unknown.method"))
 end)
@@ -214,6 +218,25 @@ test("validateParams: animation.getFrameState frame wrong type", function()
         {layerId = 1, frame = "twelve"})
     assert_false(ok)
     assert_true(err:find("type"), "error mentions type")
+end)
+
+test("validateParams: rig.createCutout with valid params", function()
+    local ok, err = validator.validateParams("rig.createCutout", {
+        name = "Character",
+        bones = {{name = "Root"}},
+        parts = {{name = "Torso"}},
+    })
+    assert_true(ok)
+    assert_eq(err, nil)
+end)
+
+test("validateParams: rig.createCutout requires parts", function()
+    local ok, err = validator.validateParams("rig.createCutout", {
+        name = "Character",
+        bones = {},
+    })
+    assert_false(ok)
+    assert_true(err:find("parts"), "error mentions parts")
 end)
 
 -------------------------------------------------------------------------------

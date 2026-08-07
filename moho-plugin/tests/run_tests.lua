@@ -16,12 +16,13 @@ end
 -- Normalize separators to forward slashes.
 this_dir = this_dir:gsub("\\", "/")
 
--- Parent directory is moho-plugin/.
-local plugin_dir = this_dir:gsub("tests/$", ""):gsub("tests\\$", "")
-if plugin_dir == this_dir then
+-- Runtime files are in the native Install Script layout: Modules/MohoMCP/.
+local package_dir = this_dir:gsub("tests/$", ""):gsub("tests\\$", "")
+if package_dir == this_dir then
     -- Fallback: assume we are running from inside the tests directory.
-    plugin_dir = "../"
+    package_dir = "../"
 end
+local plugin_dir = package_dir .. "Modules/MohoMCP/"
 
 package.path = plugin_dir .. "?.lua;"
             .. plugin_dir .. "?/init.lua;"

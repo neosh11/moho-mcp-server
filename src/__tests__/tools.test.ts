@@ -62,9 +62,9 @@ describe("registerTools", () => {
     ).not.toThrow();
   });
 
-  it("registers exactly 26 tools", () => {
+  it("registers exactly 27 tools", () => {
     registerTools(mockServer as unknown as Parameters<typeof registerTools>[0], client);
-    expect(mockServer.tools).toHaveLength(26);
+    expect(mockServer.tools).toHaveLength(27);
   });
 
   it("registers all expected tool names", () => {
@@ -96,6 +96,7 @@ describe("registerTools", () => {
     expect(names).toContain("layer_setOpacity");
     expect(names).toContain("layer_setName");
     expect(names).toContain("layer_selectLayer");
+    expect(names).toContain("rig_createCutout");
 
     // Screenshot & input tools
     expect(names).toContain("document_screenshot");

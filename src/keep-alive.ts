@@ -1,15 +1,17 @@
 /**
  * Cross-platform keep-alive for MOHO viewport polling.
  *
- * MOHO's Lua polling relies on DrawMe callbacks that only fire during
- * viewport repaints.  When the user isn't interacting with MOHO the
- * viewport stops repainting and polling stalls.
+ * Moho runs plugin update callbacks as part of its UI refresh cycle. When
+ * the user isn't interacting with Moho, that cycle can pause.
  *
  * On Windows: spawns a hidden PowerShell process that calls Win32
  * RedrawWindow on the MOHO window (~4 Hz).
  *
- * On macOS: spawns an osascript process that periodically tells
- * Moho to activate, triggering viewport redraws.
+ * On macOS: when a request is pending, posts a targeted pair of Tab key
+ * events to Moho. Tab toggles the workspace UI; sending it twice restores the
+ * exact visible state while causing Moho to run script update callbacks. Moho
+ * is activated only for that instant, then the previously focused app is
+ * restored.
  */
 
 import { spawn, ChildProcess } from "node:child_process";
@@ -18,6 +20,7 @@ import path from "node:path";
 import os from "node:os";
 
 let keepAliveProcess: ChildProcess | null = null;
+let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
 let scriptPath: string | null = null;
 
 // PowerShell script that forces MOHO viewport repaints via Win32 API.
@@ -80,29 +83,28 @@ while ($true) {
 }
 `;
 
-// AppleScript that forces MOHO viewport repaints by nudging the app.
-// Sends a tiny mouse-move event to the frontmost Moho window to trigger DrawMe.
-const APPLESCRIPT_KEEPALIVE = `
-on idle
-  try
-    tell application "System Events"
-      if exists process "Moho" then
-        tell process "Moho"
-          set frontmost to true
-        end tell
-      end if
-    end tell
-  end try
-  return 0.25
-end idle
+// A one-shot wake briefly activates Moho, toggles its workspace twice, and
+// restores the app the user was in. Node launches it only while req_*.json
+// files exist, including when several concurrent requests share one wake.
+const APPLESCRIPT_WAKE = `
+tell application "System Events"
+  set previousProcess to first application process whose frontmost is true
+  set previousName to name of previousProcess
+  set frontmost of application process "Moho" to true
+  key code 48
+  key code 48
+  if previousName is not "Moho" then
+    set frontmost of application process previousName to true
+  end if
+end tell
 `;
 
 /**
  * Start the keep-alive process. Works on Windows and macOS.
  * No-op on unsupported platforms or if already running.
  */
-export function startKeepAlive(): void {
-  if (keepAliveProcess) {
+export function startKeepAlive(ipcDir = path.join(os.tmpdir(), "moho-mcp")): void {
+  if (keepAliveProcess || keepAliveTimer) {
     return;
   }
 
@@ -112,7 +114,7 @@ export function startKeepAlive(): void {
   }
 
   // Write the script to the IPC temp directory
-  const dir = path.join(os.tmpdir(), "moho-mcp");
+  const dir = ipcDir;
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch {
@@ -132,24 +134,52 @@ export function startKeepAlive(): void {
         windowsHide: true,
       },
     );
+
+    keepAliveProcess.on("exit", (code, signal) => {
+      if (code !== null && code !== 0) {
+        process.stderr.write(
+          `[moho-mcp] Keep-alive exited (code=${code}, signal=${signal ?? "none"})\n`,
+        );
+      }
+      keepAliveProcess = null;
+    });
   } else {
     // macOS
-    scriptPath = path.join(dir, "keep-alive.scpt");
-    fs.writeFileSync(scriptPath, APPLESCRIPT_KEEPALIVE, "utf-8");
+    scriptPath = path.join(dir, "wake-moho.applescript");
+    fs.writeFileSync(scriptPath, APPLESCRIPT_WAKE, "utf-8");
 
-    keepAliveProcess = spawn(
-      "osascript",
-      [scriptPath],
-      {
-        stdio: "ignore",
+    const wakeIfPending = () => {
+      if (keepAliveProcess || !scriptPath) return;
+
+      let pending = false;
+      try {
+        pending = fs.readdirSync(ipcDir).some((name) => /^req_\d+\.json$/.test(name));
+      } catch {
+        return;
+      }
+      if (!pending) return;
+
+      const child = spawn("osascript", [scriptPath], {
+        stdio: ["ignore", "ignore", "pipe"],
         detached: false,
-      },
-    );
-  }
+      });
+      keepAliveProcess = child;
+      child.stderr?.on("data", (chunk: Buffer) => {
+        process.stderr.write(String(chunk));
+      });
+      child.on("exit", (code, signal) => {
+        if (code !== null && code !== 0) {
+          process.stderr.write(
+            `[moho-mcp] Moho wake exited (code=${code}, signal=${signal ?? "none"})\n`,
+          );
+        }
+        if (keepAliveProcess === child) keepAliveProcess = null;
+      });
+    };
 
-  keepAliveProcess.on("exit", () => {
-    keepAliveProcess = null;
-  });
+    keepAliveTimer = setInterval(wakeIfPending, 100);
+    wakeIfPending();
+  }
 
   process.stderr.write("[moho-mcp] Keep-alive started (MOHO viewport refresh)\n");
 }
@@ -158,10 +188,15 @@ export function startKeepAlive(): void {
  * Stop the keep-alive process and clean up the temp script.
  */
 export function stopKeepAlive(): void {
+  if (keepAliveTimer) {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = null;
+  }
+
+  const wasRunning = Boolean(keepAliveProcess || scriptPath);
   if (keepAliveProcess) {
     keepAliveProcess.kill();
     keepAliveProcess = null;
-    process.stderr.write("[moho-mcp] Keep-alive stopped\n");
   }
 
   if (scriptPath) {
@@ -171,5 +206,9 @@ export function stopKeepAlive(): void {
       // ignore cleanup errors
     }
     scriptPath = null;
+  }
+
+  if (wasRunning) {
+    process.stderr.write("[moho-mcp] Keep-alive stopped\n");
   }
 }

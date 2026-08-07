@@ -1,6 +1,6 @@
 {
   "name": "moho-mcp-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP bridge server for controlling Moho Pro 14 from AI clients",
   "license": "Apache-2.0",
   "type": "module",
@@ -40,9 +40,13 @@
   "scripts": {
     "bundle": "esbuild src/index.ts --bundle --minify --platform=node --target=node20 --format=esm --outfile=dist/moho-mcp-server.mjs",
     "build": "npm run typecheck && npm run bundle",
+    "dev": "esbuild src/index.ts --bundle --sourcemap --platform=node --target=node20 --format=esm --outfile=dist/moho-mcp-server.mjs --watch",
+    "dev:install": "./install-plugin.sh",
+    "dev:verify": "npm test && npm run test:lua && npm run lint && npm run build",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint .",
     "test": "vitest run",
+    "test:lua": "lua moho-plugin/tests/run_tests.lua",
     "test:watch": "vitest",
     "start": "node dist/moho-mcp-server.mjs",
     "prepare": "npm run build"

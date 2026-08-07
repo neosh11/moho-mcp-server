@@ -2,7 +2,9 @@ import path from "node:path";
 import os from "node:os";
 
 const defaultIpcDir = process.env.MOHO_MCP_IPC_DIR ||
-  path.join(os.tmpdir(), "moho-mcp");
+  (process.platform === "win32"
+    ? path.join(os.tmpdir(), "moho-mcp")
+    : "/tmp/moho-mcp");
 
 export const config = {
   moho: {
@@ -15,6 +17,6 @@ export const config = {
   },
   server: {
     name: "moho-mcp",
-    version: "0.1.0",
+    version: "0.2.0",
   },
 } as const;

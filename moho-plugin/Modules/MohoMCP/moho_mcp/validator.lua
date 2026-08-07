@@ -31,6 +31,7 @@ local allowedMethods = {
     ["document.setFrame"]             = true,
     -- Phase 3: Visual feedback
     ["document.screenshot"]           = true,
+    ["rig.createCutout"]              = true,
     -- Batch execution
     ["batch.execute"]                 = true,
 }
@@ -118,6 +119,11 @@ local paramSchemas = {
     },
     -- Phase 3: Visual feedback (no required params — frame/width/height are optional)
     ["document.screenshot"]    = {},
+    ["rig.createCutout"]       = {
+        { name = "name",  type = "string" },
+        { name = "bones", type = "table" },
+        { name = "parts", type = "table" },
+    },
     -- Batch execution
     ["batch.execute"]          = {
         { name = "operations", type = "table" },

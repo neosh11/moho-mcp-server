@@ -4,6 +4,11 @@ import path from "node:path";
 import os from "node:os";
 import { MohoClient } from "../moho-client.js";
 
+vi.mock("../keep-alive.js", () => ({
+  startKeepAlive: vi.fn(),
+  stopKeepAlive: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -372,7 +377,7 @@ describe("MohoClient", () => {
       expect(sawReqFile).toBe(true);
     });
 
-    it("increments request IDs", async () => {
+    it("cycles request IDs through the 100 slots polled by Lua", async () => {
       writeStatusFile(testIpcDir, true);
 
       const receivedIds: number[] = [];
@@ -386,12 +391,12 @@ describe("MohoClient", () => {
       });
 
       await client.connect();
-      await client.sendRequest("a");
-      await client.sendRequest("b");
-      await client.sendRequest("c");
+      for (let index = 0; index < 102; index++) {
+        await client.sendRequest(`method.${index}`);
+      }
 
-      expect(receivedIds[0]).toBeLessThan(receivedIds[1]);
-      expect(receivedIds[1]).toBeLessThan(receivedIds[2]);
-    });
+      expect(receivedIds.slice(0, 3)).toEqual([1, 2, 3]);
+      expect(receivedIds.slice(98, 102)).toEqual([99, 100, 1, 2]);
+    }, 10000);
   });
 });

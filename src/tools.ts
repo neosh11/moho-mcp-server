@@ -803,11 +803,62 @@ export function registerTools(server: McpServer, client: MohoClient): void {
     },
   );
 
+  // 26. rig.createCutout — Build a layered image character and bone rig
+  server.tool(
+    "rig_createCutout",
+    "Create a reusable Moho cutout rig from transparent image parts. Creates one bone layer, a topologically ordered skeleton, image layers ordered back-to-front, and layer-to-bone bindings in one undoable operation. Coordinates use Moho document space and bone angles use radians.",
+    {
+      name: z.string().min(1).describe("Name for the new bone layer"),
+      bones: z
+        .array(
+          z.object({
+            name: z.string().min(1),
+            parentId: z.number().int().min(-1).optional(),
+            x: z.number().describe("Global rest-position X coordinate"),
+            y: z.number().describe("Global rest-position Y coordinate"),
+            angle: z.number().describe("Global rest angle in radians"),
+            length: z.number().positive().describe("Bone length in document units"),
+          }),
+        )
+        .min(1)
+        .max(100)
+        .describe("Bones in parent-before-child order"),
+      parts: z
+        .array(
+          z.object({
+            name: z.string().min(1),
+            path: z.string().min(1).describe("Absolute path to a PNG or other Moho-supported image"),
+            boneName: z.string().min(1).optional(),
+            x: z.number().describe("Image-layer center X coordinate"),
+            y: z.number().describe("Image-layer center Y coordinate"),
+            scale: z.number().positive().optional(),
+            rotation: z.number().optional().describe("Initial layer rotation in radians"),
+          }),
+        )
+        .min(1)
+        .max(100)
+        .describe("Image parts in back-to-front stacking order"),
+    },
+    async ({ name, bones, parts }) => {
+      try {
+        await ensureConnected(client);
+        const result = await client.sendRequest(
+          "rig.createCutout",
+          { name, bones, parts },
+          { timeout: config.moho.renderTimeout },
+        );
+        return successContent(result);
+      } catch (err) {
+        return errorContent(err);
+      }
+    },
+  );
+
   // =========================================================================
   // Batch Execution
   // =========================================================================
 
-  // 26. batch.execute — Execute multiple operations in a single IPC round-trip
+  // 27. batch.execute — Execute multiple operations in a single IPC round-trip
   server.tool(
     "batch_execute",
     "Execute multiple MOHO operations in a single IPC round-trip (~300ms total) instead of one round-trip per call (~300ms each). " +

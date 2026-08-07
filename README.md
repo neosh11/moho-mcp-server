@@ -1,34 +1,32 @@
 # moho-mcp-server
 
-An MCP server for Moho Pro 14. It lets MCP clients inspect documents, edit
-layers and animation, render frames, capture the Moho window, and send mouse
-or keyboard input.
+An MCP server for Moho Pro 14. It can inspect and edit documents, animate
+layers and bones, render frames, control the Moho UI, and build a complete
+layered cutout rig from transparent image parts.
 
-The bridge is distributed as a bundled npm executable, so MCP clients can run
-it directly with `npx`. A Lua plugin inside Moho handles the application-side
-operations through file-based JSON-RPC.
+The Node bridge is a bundled executable that MCP clients can launch with
+`npx`. The application-side Lua plugin installs into Moho's **Custom Content**
+folder, so it never modifies the signed application bundle or requires
+administrator access.
 
-This project is adapted from
-[Kveto/MohoMCP](https://github.com/Kveto/MohoMCP). See
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution.
+This project is adapted from [Kveto/MohoMCP](https://github.com/Kveto/MohoMCP).
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution.
 
 ## Requirements
 
-- Moho Pro 14
+- Moho Pro 14 (14.4 recommended)
 - Node.js 20 or newer
-- Windows 10/11 or macOS
+- macOS or Windows 10/11
 
-On macOS, input simulation requires Accessibility permission for the app that
-starts the MCP server. `cliclick` is optional but recommended for reliable
-mouse input:
+On macOS, grant Accessibility permission to the application that launches the
+MCP server. This lets the request wake-up helper and optional input tools
+interact with Moho. `cliclick` is optional for mouse input:
 
 ```bash
 brew install cliclick
 ```
 
 ## Install the Moho plugin
-
-Clone this repository, then run the installer for your platform:
 
 ```bash
 git clone https://github.com/neosh11/moho-mcp-server.git
@@ -37,16 +35,28 @@ chmod +x install-plugin.sh
 ./install-plugin.sh
 ```
 
-On Windows, run `install-plugin.bat` as an administrator. The installer copies
-the menu script, poller, JSON library, and tool handlers into the Moho 14
-application scripts directories.
+The macOS installer reads Moho's configured `EditableFilesDir` and currently
+installs to paths such as `~/Documents/moho/Moho Pro/Scripts`. It supports both
+`/Applications/Moho.app` and versioned app names because it does not write into
+either bundle.
 
-You can also install the files manually. See
-[docs/installation.md](docs/installation.md).
+On Windows, run `install-plugin.bat` normally—administrator access is not
+needed. If the Custom Content folder cannot be detected, pass it explicitly:
+
+```cmd
+install-plugin.bat "C:\Users\you\Documents\Moho\Moho Pro"
+```
+
+Restart Moho after the first install. Then choose
+**Scripts > MohoMCP > Start/Stop MohoMCP Server**. There is no poller tool to
+select.
+
+See [docs/installation.md](docs/installation.md) for manual installation and
+troubleshooting.
 
 ## Configure an MCP client
 
-Run the prebuilt package directly from the latest GitHub release:
+Use the prebuilt package from the latest GitHub release:
 
 ```json
 {
@@ -62,47 +72,14 @@ Run the prebuilt package directly from the latest GitHub release:
 }
 ```
 
-For local development, build the bundle and point the client at it:
+To pin this release, replace `latest/download` with
+`download/v0.2.0/moho-mcp-server-0.2.0.tgz`.
 
-```bash
-npm install
-npm run build
-```
-
-```json
-{
-  "mcpServers": {
-    "moho-mcp": {
-      "command": "node",
-      "args": ["/absolute/path/to/moho-mcp-server/dist/moho-mcp-server.mjs"]
-    }
-  }
-}
-```
-
-## Start MohoMCP
-
-1. Open Moho Pro 14 and load a project.
-2. Choose **Scripts > MohoMCP > Start/Stop MohoMCP Server**.
-3. Select **MohoMCP Poller** from the toolbar.
-4. Start or reconnect your MCP client.
-
-The bridge starts automatically when the client launches:
-
-```bash
-npx -y https://github.com/neosh11/moho-mcp-server/releases/latest/download/moho-mcp-server.tgz
-```
-
-The `latest/download` URL follows the newest release. To pin a version, use
-`https://github.com/neosh11/moho-mcp-server/releases/download/v0.1.0/moho-mcp-server-0.1.0.tgz`.
-The tarball contains the prebuilt bundle and installs without transitive
-dependencies.
-
-All protocol messages use stdout. Status and error messages use stderr.
+All MCP protocol messages use stdout; operational logs use stderr.
 
 ## Tools
 
-The server exposes 26 tools:
+The server exposes 27 tools:
 
 | Area | Tools |
 | --- | --- |
@@ -112,47 +89,49 @@ The server exposes 26 tools:
 | Animation | `animation_getKeyframes`, `animation_getFrameState`, `animation_setKeyframe`, `animation_deleteKeyframe`, `animation_setInterpolation` |
 | Mesh | `mesh_getPoints`, `mesh_getShapes` |
 | Input | `input_mouseClick`, `input_mouseDrag`, `input_sendKeys` |
+| Rigging | `rig_createCutout` |
 | Batch | `batch_execute` |
 
-It also exposes `moho://shortcuts` and `moho://tools` as MCP resources.
-See [docs/tool-reference.md](docs/tool-reference.md) for schemas and examples.
+`rig_createCutout` creates an ordered skeleton, transparent image layers, and
+layer-to-bone bindings in one undoable operation. Image paths are supplied by
+the caller and are not stored in this repository.
 
-Use `batch_execute` for two or more independent Moho operations. A batch uses
-one IPC round trip instead of one round trip per operation.
-
-## Configuration
-
-| Environment variable | Default | Description |
-| --- | --- | --- |
-| `MOHO_MCP_IPC_DIR` | `<system temp>/moho-mcp` | File IPC directory used by the Node bridge |
-
-The Moho plugin and bridge must use the same IPC directory.
+Use `batch_execute` whenever two or more operations can share one IPC round
+trip. See [docs/tool-reference.md](docs/tool-reference.md) for schemas.
 
 ## Architecture
 
 ```text
-MCP client <--stdio--> Node bridge <--JSON files--> Moho Lua plugin
-                                      system temp
+MCP client <--stdio--> Node bridge <--JSON files--> Moho 14.4 Lua plugin
+                                      /tmp/moho-mcp (macOS)
+                                      %TEMP%\moho-mcp (Windows)
 ```
 
-For each operation, the bridge writes `req_<id>.json`, waits for the plugin to
-write `resp_<id>.json`, then removes the response. A platform-specific
-keep-alive process refreshes the Moho viewport so the Lua poller continues to
-run while the user is idle.
+Request IDs reuse 100 bounded file slots, so polling remains fast and reliable
+after an unlimited number of calls. On macOS the bridge wakes Moho only while a
+request is pending, briefly restoring the previous foreground application
+afterward. The plugin uses Moho 14's `ScriptInterfaceHelper` to obtain a valid
+current document interface inside update callbacks.
 
-## Development
+## Development loop
 
 ```bash
 npm install
-npm run typecheck
-npm test
-npm run lint
-npm run build
+npm run dev:install   # copy Lua files into Custom Content
+npm run dev           # rebuild the Node bundle on TypeScript changes
 ```
 
-The bundled executable is written to `dist/moho-mcp-server.mjs`.
+For runtime Lua changes, stop the server in Moho, run `npm run dev:install`,
+then start it again. Runtime modules are deliberately unloaded on Stop, so no
+Moho restart is needed. Restart only after changing the menu entry itself.
+
+Useful checks:
+
+```bash
+npm run dev:verify    # TypeScript, Vitest, Lua tests, lint, bundle
+```
 
 ## License
 
-Apache-2.0. Portions adapted from MohoMCP remain subject to its MIT notice;
-see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Apache-2.0. Portions adapted from MohoMCP remain subject to its MIT notice; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

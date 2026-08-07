@@ -22,6 +22,13 @@ export class MohoClient {
   private nextId = 1;
   private connected = false;
 
+  /** Allocate one of the 100 request slots polled by the Lua bridge. */
+  private allocateRequestId(): number {
+    const id = this.nextId;
+    this.nextId = id >= 100 ? 1 : id + 1;
+    return id;
+  }
+
   // -----------------------------------------------------------------------
   // Connection lifecycle
   // -----------------------------------------------------------------------
@@ -63,7 +70,7 @@ export class MohoClient {
     }
 
     this.connected = true;
-    startKeepAlive();
+    startKeepAlive(config.moho.ipcDir);
     process.stderr.write(
       `[moho-mcp] Connected to MOHO via file IPC at ${ipcDir}\n`,
     );
@@ -102,7 +109,7 @@ export class MohoClient {
       );
     }
 
-    const id = this.nextId++;
+    const id = this.allocateRequestId();
     const { ipcDir, pollInterval, requestTimeout } = config.moho;
     const timeout = options?.timeout ?? requestTimeout;
 
@@ -119,10 +126,14 @@ export class MohoClient {
     const reqPath = path.join(ipcDir, reqFileName);
     const respPath = path.join(ipcDir, respFileName);
 
+    // A prior bridge process may have left a response in this reusable slot.
+    await fs.promises.unlink(respPath).catch(() => {});
+
     // Write request file atomically (write to .tmp then rename)
     const tmpPath = reqPath + ".tmp";
     await fs.promises.writeFile(tmpPath, JSON.stringify(request), "utf-8");
     await fs.promises.rename(tmpPath, reqPath);
+
 
     // Poll for response file
     const startTime = Date.now();

@@ -1,6 +1,6 @@
 # MohoMCP Tool Reference
 
-Complete reference for all 26 MCP tools and 2 knowledge resources.
+Complete reference for all 27 MCP tools and 2 knowledge resources.
 
 ---
 
@@ -529,6 +529,42 @@ Send a keyboard shortcut to the MOHO window.
 See the `moho://shortcuts` resource for the complete shortcut reference.
 
 ---
+
+## Rigging
+
+### `rig_createCutout`
+
+Create a bone layer, a parent-before-child skeleton, ordered transparent image
+layers, and layer-to-bone bindings in one undoable operation.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `name` | string | Yes | New bone-layer name |
+| `bones` | array | Yes | Up to 100 rest bones in parent-before-child order |
+| `parts` | array | Yes | Up to 100 image parts in back-to-front stacking order |
+
+Each bone accepts `name`, `parentId`, global `x`/`y`, global `angle` in radians,
+and positive `length`. Each part accepts `name`, an absolute image `path`,
+center `x`/`y`, optional `scale` and `rotation`, and an optional `boneName` to
+bind the whole layer.
+
+```json
+{
+  "name": "Character Rig",
+  "bones": [
+    { "name": "root", "parentId": -1, "x": 0, "y": 0, "angle": 1.5708, "length": 0.2 },
+    { "name": "torso", "parentId": 0, "x": 0, "y": 0, "angle": 1.5708, "length": 0.4 }
+  ],
+  "parts": [
+    { "name": "body", "path": "/absolute/path/body.png", "boneName": "torso", "x": 0, "y": 0.25, "scale": 0.5 }
+  ]
+}
+```
+
+The return value includes absolute layer IDs, bone IDs, bindings, and source
+pixel dimensions.
 
 ## Batch Execution
 

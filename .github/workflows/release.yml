@@ -47,6 +47,7 @@ jobs:
           tarball=$(npm pack --silent | tail -1)
           echo "tarball=$tarball" >> "$GITHUB_ENV"
           cp "$tarball" moho-mcp-server.tgz
+          (cd moho-plugin && zip -r ../moho-mcp-plugin.zip Menu Modules)
 
       - name: Create GitHub release
         env:
@@ -59,4 +60,7 @@ jobs:
             --generate-notes \
             "$tarball" \
             moho-mcp-server.tgz \
+            moho-mcp-plugin.zip \
+            install-plugin.sh \
+            install-plugin.bat \
             dist/moho-mcp-server.mjs

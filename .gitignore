@@ -10,5 +10,6 @@ Thumbs.db
 *.swp
 *.swo
 playground
+/assets/
 # npm pack output
 *.tgz

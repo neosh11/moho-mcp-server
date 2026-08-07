@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "MohoMCP Tool Definitions",
-  "description": "JSON Schema definitions for all MohoMCP tools (Phase 1 MVP)",
-  "version": "0.1.0",
+  "description": "JSON Schema definitions for MohoMCP Lua methods",
+  "version": "0.2.0",
   "tools": {
     "document.getInfo": {
       "description": "Get information about the currently open MOHO document",
@@ -203,6 +203,61 @@
           "layerId": { "type": "number" },
           "shapeCount": { "type": "number" },
           "shapes": { "type": "array" }
+        }
+      }
+    },
+    "rig.createCutout": {
+      "description": "Create a layered image cutout and bone rig in one undoable operation",
+      "params": {
+        "type": "object",
+        "required": ["name", "bones", "parts"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "bones": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "required": ["name", "x", "y", "angle", "length"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "parentId": { "type": "integer", "minimum": -1 },
+                "x": { "type": "number" },
+                "y": { "type": "number" },
+                "angle": { "type": "number" },
+                "length": { "type": "number", "exclusiveMinimum": 0 }
+              }
+            }
+          },
+          "parts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "required": ["name", "path", "x", "y"],
+              "properties": {
+                "name": { "type": "string", "minLength": 1 },
+                "path": { "type": "string", "minLength": 1 },
+                "boneName": { "type": "string", "minLength": 1 },
+                "x": { "type": "number" },
+                "y": { "type": "number" },
+                "scale": { "type": "number", "exclusiveMinimum": 0 },
+                "rotation": { "type": "number" }
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "layerId": { "type": "number" },
+          "name": { "type": "string" },
+          "bones": { "type": "array" },
+          "parts": { "type": "array" }
         }
       }
     }

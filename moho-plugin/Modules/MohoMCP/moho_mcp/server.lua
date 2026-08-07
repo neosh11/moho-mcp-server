@@ -42,9 +42,15 @@ function server.getHandler(method)
 end
 
 --- Get the IPC directory path.
--- Uses TEMP/moho-mcp/ on Windows, /tmp/moho-mcp/ on others.
+-- Uses TEMP/moho-mcp/ on Windows and /tmp/moho-mcp/ on Unix.
+-- A stable Unix path is intentional: MCP launchers commonly filter TMPDIR.
 local function getIpcDir()
-    local tmp = os.getenv("TEMP") or os.getenv("TMP") or os.getenv("TMPDIR") or "/tmp"
+    local tmp
+    if SEP == "\\" then
+        tmp = os.getenv("TEMP") or os.getenv("TMP") or "C:\\Temp"
+    else
+        tmp = "/tmp"
+    end
     return tmp .. SEP .. "moho-mcp" .. SEP
 end
 
@@ -100,76 +106,20 @@ local function mkdirp(path)
     if handle then handle:close() end
 end
 
---- Find request/response files by probing for known ID patterns.
+--- Find request/response files by probing the bridge's bounded slot IDs.
 --- Pure Lua — no shell commands, no visible windows.
---- The bridge uses incrementing integer IDs (1, 2, 3, …) so we
---- scan a range of IDs and check if the file exists via io.open.
---- Scan a fixed window of IDs starting from 1.
---- On modern SSDs, probing ~200 files via io.open is <5ms.
---- The bridge resets its counter on restart, so IDs are typically low.
+--- The bridge reuses IDs 1..100, so polling cost stays bounded forever.
 local function findFilesByPrefix(dir, prefix)
     local files = {}
-    local misses = 0
-    for id = 1, 10000 do
+    for id = 1, 100 do
         local fname = prefix .. id .. ".json"
         local f = io.open(dir .. fname, "r")
         if f then
             f:close()
             files[#files + 1] = fname
-            misses = 0
-        else
-            misses = misses + 1
-            -- Stop after 100 consecutive misses (covers any reasonable gap)
-            if misses > 100 then
-                break
-            end
         end
     end
     return files
-end
-
---- One-time wide scan to discover the current bridge ID range.
---- Called once at server start. Uses io.popen (single cmd window, one time only).
-local function discoverCurrentIdRange(dir)
-    local cmd
-    if SEP == "\\" then
-        cmd = 'cmd /c dir /b "' .. dir .. 'req_*.json" 2>NUL'
-    else
-        cmd = 'ls -1 "' .. dir .. '"req_*.json 2>/dev/null'
-    end
-    local handle = io.popen(cmd)
-    if handle then
-        for line in handle:lines() do
-            local id = line:match("req_(%d+)%.json")
-            if id then
-                local numId = tonumber(id)
-                if numId and numId > lastSeenMaxId then
-                    lastSeenMaxId = numId
-                end
-            end
-        end
-        handle:close()
-    end
-    -- Also check response files for ID range
-    if SEP == "\\" then
-        cmd = 'cmd /c dir /b "' .. dir .. 'resp_*.json" 2>NUL'
-    else
-        cmd = 'ls -1 "' .. dir .. '"resp_*.json 2>/dev/null'
-    end
-    handle = io.popen(cmd)
-    if handle then
-        for line in handle:lines() do
-            local id = line:match("resp_(%d+)%.json")
-            if id then
-                local numId = tonumber(id)
-                if numId and numId > lastSeenMaxId then
-                    lastSeenMaxId = numId
-                end
-            end
-        end
-        handle:close()
-    end
-    print("[MohoMCP] Discovered max ID: " .. tostring(lastSeenMaxId))
 end
 
 --- Start the file-based IPC server.
@@ -205,7 +155,7 @@ function server.start()
     writeFile(ipcDir .. "status.json", json.encode({
         running = true,
         pid = "moho",
-        version = "0.1.0",
+        version = "0.2.0",
         startedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     }))
 
