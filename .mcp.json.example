@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "moho-mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "https://github.com/neosh11/moho-mcp-server/releases/latest/download/moho-mcp-server.tgz"
+      ]
+    }
+  }
+}

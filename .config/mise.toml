@@ -1,0 +1,7 @@
+# Toolchain for local development, matching the version CI builds with.
+#
+# `mise install` picks this up automatically. Note this is the version used to
+# build and test — the published bundle targets Node 20 so it still runs for
+# users on older runtimes (see the esbuild --target in package.json).
+[tools]
+node = "24"

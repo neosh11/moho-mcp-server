@@ -1,0 +1,59 @@
+{
+  "name": "moho-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP bridge server for controlling Moho Pro 14 from AI clients",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "moho-mcp-server": "dist/moho-mcp-server.mjs",
+    "moho-mcp": "dist/moho-mcp-server.mjs"
+  },
+  "files": [
+    "dist/moho-mcp-server.mjs",
+    "docs/",
+    "moho-plugin/",
+    "schema/",
+    "install-plugin.bat",
+    "install-plugin.sh",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neosh11/moho-mcp-server.git"
+  },
+  "homepage": "https://github.com/neosh11/moho-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/neosh11/moho-mcp-server/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "moho",
+    "animation"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "bundle": "esbuild src/index.ts --bundle --minify --platform=node --target=node20 --format=esm --outfile=dist/moho-mcp-server.mjs",
+    "build": "npm run typecheck && npm run bundle",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/moho-mcp-server.mjs",
+    "prepare": "npm run build"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@types/node": "24.13.3",
+    "esbuild": "0.28.1",
+    "oxlint": "1.77.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10",
+    "zod": "3.25.76"
+  }
+}
