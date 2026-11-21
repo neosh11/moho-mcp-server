@@ -5,6 +5,13 @@
 
 local server = {}
 
+-- Protocol revision of this plugin. Written to status.json when the server
+-- starts, so the bridge can tell which code Moho actually loaded (Moho loads
+-- the plugin once, at server start; updating the files does not reload it).
+-- Bump it whenever the bridge starts relying on a change on this side.
+local PROTOCOL = 4
+server.PROTOCOL = PROTOCOL
+
 -- Dependencies (set by init)
 local protocol = nil
 local validator = nil
@@ -228,6 +235,7 @@ function server.start()
         running = true,
         pid = "moho",
         version = "0.1.0",
+        protocol = PROTOCOL,
         startedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     }))
 

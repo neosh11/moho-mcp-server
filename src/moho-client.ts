@@ -18,6 +18,33 @@ import { keepAliveHint, startKeepAlive, stopKeepAlive } from "./keep-alive.js";
 // MohoClient
 // ---------------------------------------------------------------------------
 
+// Requests that crash MOHO when an older plugin runs them inside a poll
+// (FileRender, arbitrary scripts). They are refused up front if the plugin
+// MOHO loaded is older than this bridge expects.
+const PROTOCOL_GATED = new Set(["document.screenshot", "script.run"]);
+
+/**
+ * Protocol revision of the plugin MOHO loaded, from status.json. 0 for
+ * plugins that predate the field; null if status.json cannot be read.
+ */
+export function loadedPluginProtocol(ipcDir: string): number | null {
+  try {
+    const status = JSON.parse(fs.readFileSync(path.join(ipcDir, "status.json"), "utf-8"));
+    return typeof status.protocol === "number" ? status.protocol : 0;
+  } catch {
+    return null;
+  }
+}
+
+function stalePluginMessage(loaded: number, expected: number): string {
+  return (
+    `MOHO is running an older MohoMCP plugin (protocol ${loaded}, this bridge needs ${expected}). ` +
+    "Install the plugin from this repository (install-plugin.sh), then stop and start the server " +
+    "in MOHO (Scripts > MohoMCP > Start/Stop MohoMCP Server) or restart MOHO. MOHO loads the " +
+    "plugin only when the server starts."
+  );
+}
+
 export class MohoClient {
   private nextId = 1;
   private connected = false;
@@ -70,6 +97,12 @@ export class MohoClient {
       await fs.promises.unlink(marker).catch(() => {});
     }
 
+    const expected = config.moho.pluginProtocol;
+    const loaded = loadedPluginProtocol(ipcDir);
+    if (expected && loaded !== null && loaded < expected) {
+      process.stderr.write(`[moho-mcp] WARNING: ${stalePluginMessage(loaded, expected)}\n`);
+    }
+
     this.connected = true;
     startKeepAlive();
     process.stderr.write(
@@ -110,8 +143,18 @@ export class MohoClient {
       );
     }
 
-    const id = this.nextId++;
     const { ipcDir, pollInterval, requestTimeout } = config.moho;
+
+    // Refuse requests that would crash MOHO on a stale plugin.
+    const expected = config.moho.pluginProtocol;
+    if (expected && PROTOCOL_GATED.has(method)) {
+      const loaded = loadedPluginProtocol(ipcDir);
+      if (loaded !== null && loaded < expected) {
+        throw new Error(stalePluginMessage(loaded, expected));
+      }
+    }
+
+    const id = this.nextId++;
     const timeout = options?.timeout ?? requestTimeout;
 
     // Build JSON-RPC request

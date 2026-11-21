@@ -25,10 +25,10 @@ function cleanupTestIpcDir(dir: string): void {
 }
 
 /** Write a status.json that indicates the server is running. */
-function writeStatusFile(dir: string, running = true): void {
+function writeStatusFile(dir: string, running = true, protocol?: number): void {
   fs.writeFileSync(
     path.join(dir, "status.json"),
-    JSON.stringify({ running, pid: "moho", version: "0.1.0" }),
+    JSON.stringify({ running, pid: "moho", version: "0.1.0", ...(protocol !== undefined ? { protocol } : {}) }),
   );
 }
 
@@ -97,6 +97,7 @@ vi.mock("../config.js", () => ({
       },
       pollInterval: 20, // fast polling for tests
       requestTimeout: 2000, // 2s timeout for tests
+      pluginProtocol: 4,
     },
     server: {
       name: "moho-mcp-test",
@@ -392,6 +393,39 @@ describe("MohoClient", () => {
 
       expect(receivedIds[0]).toBeLessThan(receivedIds[1]);
       expect(receivedIds[1]).toBeLessThan(receivedIds[2]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // stale plugin protection
+  // -------------------------------------------------------------------------
+
+  describe("plugin protocol check", () => {
+    it("refuses a screenshot when MOHO loaded an older plugin, without writing a request", async () => {
+      writeStatusFile(testIpcDir, true); // no protocol field = older plugin
+      await client.connect();
+      await expect(client.sendRequest("document.screenshot", {})).rejects.toThrow(/older MohoMCP plugin/);
+      expect(fs.readdirSync(testIpcDir).filter((f) => f.startsWith("req_"))).toEqual([]);
+    });
+
+    it("refuses script.run on an older plugin", async () => {
+      writeStatusFile(testIpcDir, true, 3);
+      await client.connect();
+      await expect(client.sendRequest("script.run", { code: "return 1" })).rejects.toThrow(/protocol 3, this bridge needs 4/);
+    });
+
+    it("sends a screenshot when the plugin protocol is current", async () => {
+      writeStatusFile(testIpcDir, true, 4);
+      mohoServer = simulateMohoServer(testIpcDir, (req) => ({ jsonrpc: "2.0", id: req.id, result: { ok: true } }));
+      await client.connect();
+      await expect(client.sendRequest("document.screenshot", {})).resolves.toEqual({ ok: true });
+    });
+
+    it("does not gate safe methods on an older plugin", async () => {
+      writeStatusFile(testIpcDir, true);
+      mohoServer = simulateMohoServer(testIpcDir, (req) => ({ jsonrpc: "2.0", id: req.id, result: { name: "doc" } }));
+      await client.connect();
+      await expect(client.sendRequest("document.getInfo", {})).resolves.toEqual({ name: "doc" });
     });
   });
 });
