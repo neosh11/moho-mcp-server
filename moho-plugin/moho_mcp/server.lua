@@ -11,6 +11,11 @@ local validator = nil
 
 -- Server state
 local isRunning = false
+-- True while a poll is in progress. Long operations (FileRender) pump UI events,
+-- which can fire DrawMe/IsEnabled and re-enter poll(); without this guard the
+-- nested poll picks up the same, still unanswered request file and runs it again
+-- inside the first one, which crashes Moho in FileRender.
+local polling = false
 local ipcDir = ""
 
 -- Tool handler registry: method name -> function(moho, params) -> result, err
@@ -298,9 +303,18 @@ end
 -- Processes at most a few requests per call to avoid blocking the UI.
 -- @param moho  The MOHO ScriptInterface object
 function server.poll(moho)
-    if not isRunning then
+    if not isRunning or polling then
         return
     end
+    polling = true
+    local ok, err = pcall(server._pollOnce, moho)
+    polling = false
+    if not ok then
+        error(err, 0)
+    end
+end
+
+function server._pollOnce(moho)
 
     -- Look for request files (req_*.json)
     local reqFiles = findFilesByPrefix(ipcDir, "req_")
