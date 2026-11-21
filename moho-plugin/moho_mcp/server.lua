@@ -363,11 +363,11 @@ local function scanRequests()
 end
 
 local function deferAllowed()
-    if SEP == "\\" then
-        return false
-    end
-    local state = readFile(ipcDir .. "keepalive.json")
-    return state ~= nil and state:find('"state":"ok"', 1, true) ~= nil
+    -- Always defer on macOS. Running these inline crashes Moho, and the
+    -- KeepAlive applet can report a transient error (for example while a
+    -- long menu command is running), so its state must not decide this. If
+    -- the applet is really not running, the request times out instead.
+    return SEP ~= "\\"
 end
 
 local function respond(id, content, moho)
