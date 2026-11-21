@@ -33,6 +33,8 @@ local allowedMethods = {
     ["document.screenshot"]           = true,
     -- Batch execution
     ["batch.execute"]                 = true,
+    -- Lua execution (refused unless the bridge enabled it, see tools/script.lua)
+    ["script.run"]                    = true,
 }
 
 -- Parameter schemas for each method.
@@ -118,6 +120,7 @@ local paramSchemas = {
     },
     -- Phase 3: Visual feedback (no required params — frame/width/height are optional)
     ["document.screenshot"]    = {},
+    ["script.run"]             = {},
     -- Batch execution
     ["batch.execute"]          = {
         { name = "operations", type = "table" },

@@ -12,6 +12,11 @@ export const config = {
     renderTimeout: 30000,   // ms timeout for render/screenshot requests
     batchTimeoutPerOp: 500, // additional ms per operation in a batch
     maxBatchSize: 50,       // maximum number of operations in a single batch
+    scriptTimeout: 60000,   // ms timeout for script_run
+    // script_run executes arbitrary Lua inside Moho; off unless explicitly enabled.
+    allowScripts: process.env.MOHO_MCP_ALLOW_SCRIPTS === "1",
+    // Plugin protocol revision this bridge needs (see moho-plugin/moho_mcp/server.lua).
+    pluginProtocol: 4,
   },
   server: {
     name: "moho-mcp",

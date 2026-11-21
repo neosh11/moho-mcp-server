@@ -26,6 +26,14 @@ mouse input:
 brew install cliclick
 ```
 
+Moho only runs the plugin's poller while it redraws or updates its menus, and
+in the background it does neither. On macOS the bridge therefore builds and
+starts a small background applet, `~/Library/Application Support/moho-mcp/MohoMCP KeepAlive.app`,
+which reads Moho's **Scripts > MohoMCP** menu about four times a second
+without bringing Moho to the front. On first start allow it to control
+System Events, and turn it on in **System Settings > Privacy & Security >
+Accessibility**. The applet quits by itself once no bridge is running.
+
 ## Install the Moho plugin
 
 Clone this repository, then run the installer for your platform:
@@ -137,8 +145,8 @@ MCP client <--stdio--> Node bridge <--JSON files--> Moho Lua plugin
 
 For each operation, the bridge writes `req_<id>.json`, waits for the plugin to
 write `resp_<id>.json`, then removes the response. A platform-specific
-keep-alive process refreshes the Moho viewport so the Lua poller continues to
-run while the user is idle.
+keep-alive process keeps the Lua poller running while Moho is idle: on Windows
+it repaints the Moho window, on macOS the KeepAlive applet reads Moho's menu.
 
 ## Development
 

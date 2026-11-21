@@ -5,13 +5,36 @@
 
 local server = {}
 
+-- Protocol revision of this plugin. Written to status.json when the server
+-- starts, so the bridge can tell which code Moho actually loaded (Moho loads
+-- the plugin once, at server start; updating the files does not reload it).
+-- Bump it whenever the bridge starts relying on a change on this side.
+local PROTOCOL = 4
+server.PROTOCOL = PROTOCOL
+
 -- Dependencies (set by init)
 local protocol = nil
 local validator = nil
 
 -- Server state
 local isRunning = false
+-- True while a poll or a job run is in progress. Long operations pump UI
+-- events, which can fire DrawMe/IsEnabled and re-enter poll(); a nested poll
+-- would pick up the same, still unanswered request file and run it again.
+local polling = false
 local ipcDir = ""
+-- Id of the last request handled; scanning starts near it (see scanRequests).
+local lastId = 0
+-- Requests moved aside to run from a menu script (see server.runJobs).
+local pendingJobs = {}
+
+-- Methods that must not run inside a poll. Polls run from DrawMe (inside the
+-- viewport's GL draw) or IsEnabled (inside menu validation), and FileRender
+-- crashes Moho in MohoWnd::HandleMessage when called from there. On macOS,
+-- when the KeepAlive applet is working, these requests are parked as
+-- job_<id>.json and the applet presses Scripts > MohoMCP > Run MohoMCP Jobs,
+-- which runs them from a menu command like a normal export.
+local DEFERRED_METHODS = { ["document.screenshot"] = true, ["script.run"] = true }
 
 -- Tool handler registry: method name -> function(moho, params) -> result, err
 local handlers = {}
@@ -196,6 +219,12 @@ function server.start()
     for _, fname in ipairs(staleReqs) do
         os.remove(ipcDir .. fname)
     end
+    for _, fname in ipairs(findFilesByPrefix(ipcDir, "job_")) do
+        os.remove(ipcDir .. fname)
+    end
+    os.remove(ipcDir .. "jobs.pending")
+    pendingJobs = {}
+    lastId = 0
     local staleResps = findFilesByPrefix(ipcDir, "resp_")
     for _, fname in ipairs(staleResps) do
         os.remove(ipcDir .. fname)
@@ -206,6 +235,7 @@ function server.start()
         running = true,
         pid = "moho",
         version = "0.1.0",
+        protocol = PROTOCOL,
         startedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
     }))
 
@@ -298,44 +328,116 @@ end
 -- Processes at most a few requests per call to avoid blocking the UI.
 -- @param moho  The MOHO ScriptInterface object
 function server.poll(moho)
-    if not isRunning then
+    if not isRunning or polling then
         return
     end
+    polling = true
+    local ok, err = pcall(server._pollOnce, moho)
+    polling = false
+    if not ok then
+        error(err, 0)
+    end
+end
 
-    -- Look for request files (req_*.json)
-    local reqFiles = findFilesByPrefix(ipcDir, "req_")
+local function scanRequests()
+    -- The bridge numbers requests 1, 2, 3, ... and restarts at 1 when it
+    -- restarts. Probe a window around the last handled id rather than
+    -- always from 1, which stopped finding anything past id ~100.
+    local found = {}
+    local function scan(from, to)
+        local misses = 0
+        for id = from, to do
+            local fname = "req_" .. id .. ".json"
+            local f = io.open(ipcDir .. fname, "r")
+            if f then
+                f:close()
+                found[#found + 1] = { id = id, name = fname }
+                misses = 0
+            else
+                misses = misses + 1
+                if misses > 100 then
+                    break
+                end
+            end
+        end
+    end
+    local from = math.max(1, lastId - 20)
+    scan(from, lastId + 200)
+    if #found == 0 and from > 1 then
+        -- a reconnected bridge numbers from 1 again, below the window
+        scan(1, math.min(from - 1, 120))
+    end
+    return found
+end
 
+local function deferAllowed()
+    -- Always defer on macOS. Running these inline crashes Moho, and the
+    -- KeepAlive applet can report a transient error (for example while a
+    -- long menu command is running), so its state must not decide this. If
+    -- the applet is really not running, the request times out instead.
+    return SEP ~= "\\"
+end
+
+local function respond(id, content, moho)
+    local procOk, response = pcall(processRequest, content, moho)
+    if not procOk then
+        print("[MohoMCP] processRequest crashed: " .. tostring(response))
+        response = protocol.createError(nil, protocol.INTERNAL_ERROR,
+            "Server crash: " .. tostring(response))
+    end
+    writeFile(ipcDir .. "resp_" .. id .. ".json", response)
+end
+
+--- One pass over the request files; only called through server.poll.
+function server._pollOnce(moho)
     -- Process at most 2 requests per poll to keep UI responsive
     local processed = 0
-    for _, fname in ipairs(reqFiles) do
+    for _, req in ipairs(scanRequests()) do
         if processed >= 2 then
             break
         end
-
-        local reqPath = ipcDir .. fname
-        local content, readErr = readFile(reqPath)
-
+        local reqPath = ipcDir .. req.name
+        local content = readFile(reqPath)
         if content then
-            -- Process the request (wrapped in pcall for resilience)
-            local procOk, response = pcall(processRequest, content, moho)
-            if not procOk then
-                -- processRequest itself crashed — build an error response
-                print("[MohoMCP] processRequest crashed: " .. tostring(response))
-                response = protocol.createError(nil, protocol.INTERNAL_ERROR,
-                    "Server crash: " .. tostring(response))
+            lastId = req.id
+            local method = content:match('"method"%s*:%s*"([^"]+)"')
+            if DEFERRED_METHODS[method] and deferAllowed() then
+                local jobPath = ipcDir .. "job_" .. req.id .. ".json"
+                os.remove(jobPath)
+                os.rename(reqPath, jobPath)
+                pendingJobs[#pendingJobs + 1] = { id = req.id, path = jobPath }
+                writeFile(ipcDir .. "jobs.pending", "1")
+            else
+                respond(req.id, content, moho)
+                os.remove(reqPath)
             end
-
-            -- Extract request ID from filename: req_<id>.json -> resp_<id>.json
-            local reqId = fname:match("^req_(.+)%.json$")
-            if reqId then
-                local respPath = ipcDir .. "resp_" .. reqId .. ".json"
-                writeFile(respPath, response)
-            end
-
-            -- Remove the request file
-            os.remove(reqPath)
             processed = processed + 1
         end
+    end
+end
+
+--- Run requests parked by _pollOnce. Called from the "Run MohoMCP Jobs"
+-- menu script, a context where FileRender is safe.
+function server.runJobs(moho)
+    if not isRunning or polling then
+        return
+    end
+    polling = true
+    local ok, err = pcall(function()
+        os.remove(ipcDir .. "jobs.pending")
+        local jobs = pendingJobs
+        pendingJobs = {}
+        for _, job in ipairs(jobs) do
+            local content = readFile(job.path)
+            if content then
+                respond(job.id, content, moho)
+            end
+            os.remove(job.path)
+        end
+    end)
+    polling = false
+    if not ok then
+        error(err, 0)
     end
 end
 
