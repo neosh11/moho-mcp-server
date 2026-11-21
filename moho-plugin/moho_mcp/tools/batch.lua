@@ -12,6 +12,7 @@ local MAX_OPERATIONS = 50
 local disallowedInBatch = {
     ["document.screenshot"] = true,  -- too slow / heavyweight for batching
     ["batch.execute"]       = true,  -- no nesting
+    ["script.run"]          = true,  -- must run outside a poll
 }
 
 --- Execute a batch of operations.

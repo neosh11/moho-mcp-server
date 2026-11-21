@@ -804,6 +804,51 @@ export function registerTools(server: McpServer, client: MohoClient): void {
   );
 
   // =========================================================================
+  // Lua execution (opt-in)
+  // =========================================================================
+
+  if (config.moho.allowScripts) {
+    server.tool(
+      "script_run",
+      "Run Lua inside MOHO and return its result. Use it for anything the other tools cannot do: " +
+        "drawing points and shapes, creating layers and bones, styles, switch layers, camera, document settings.\n\n" +
+        "Pass `code` (a Lua chunk) or `path` (a .lua file on this machine). The chunk sees MOHO's Lua globals " +
+        "(MOHO, LM, ...) plus `moho` (the ScriptInterface: moho.document, moho:CreateNewLayer, moho:Mesh(), " +
+        "moho:CreateShape, ...) and `args` (the `args` table you pass). Whatever the chunk returns comes back as " +
+        "`result` (tables of strings/numbers/booleans pass through), and print() output comes back as `output`.\n\n" +
+        "On macOS it runs from a menu command (Scripts > MohoMCP > Run MohoMCP Jobs), where creating layers and " +
+        "rendering are safe. Errors come back with a traceback. Only enabled when the bridge was started with " +
+        "MOHO_MCP_ALLOW_SCRIPTS=1.",
+      {
+        code: z.string().optional().describe("Lua source to run"),
+        path: z.string().optional().describe("Absolute path of a .lua file to run instead of code"),
+        args: z
+          .record(z.unknown())
+          .optional()
+          .describe("Values exposed to the chunk as the global `args`"),
+      },
+      async ({ code, path: scriptPath, args }) => {
+        try {
+          if (!code && !scriptPath) {
+            throw new Error("Pass either code or path");
+          }
+          await ensureConnected(client);
+          const params: Record<string, unknown> = {};
+          if (code) params.code = code;
+          if (scriptPath) params.path = scriptPath;
+          if (args) params.args = args;
+          const result = await client.sendRequest("script.run", params, {
+            timeout: config.moho.scriptTimeout,
+          });
+          return successContent(result);
+        } catch (err) {
+          return errorContent(err);
+        }
+      },
+    );
+  }
+
+  // =========================================================================
   // Batch Execution
   // =========================================================================
 
@@ -814,7 +859,7 @@ export function registerTools(server: McpServer, client: MohoClient): void {
       "PREFER THIS over individual calls whenever you have 2+ operations.\n\n" +
       "Method names use DOT notation: \"bone.setTransform\", \"layer.getProperties\", \"animation.setKeyframe\", etc. " +
       "Params match each tool's schema exactly.\n\n" +
-      "Supports all methods EXCEPT: document.screenshot (too slow), batch.execute (no nesting).\n\n" +
+      "Supports all methods EXCEPT: document.screenshot (too slow), batch.execute (no nesting), script.run (must run outside a poll).\n\n" +
       "Common patterns:\n" +
       "- Multi-frame animation: batch bone.setTransform across frames 1,5,10,15,...\n" +
       "- Bulk reads: batch document.getInfo + document.getLayers + layer.getProperties for several layers\n" +

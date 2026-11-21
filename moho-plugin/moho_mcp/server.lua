@@ -27,7 +27,7 @@ local pendingJobs = {}
 -- when the KeepAlive applet is working, these requests are parked as
 -- job_<id>.json and the applet presses Scripts > MohoMCP > Run MohoMCP Jobs,
 -- which runs them from a menu command like a normal export.
-local DEFERRED_METHODS = { ["document.screenshot"] = true }
+local DEFERRED_METHODS = { ["document.screenshot"] = true, ["script.run"] = true }
 
 -- Tool handler registry: method name -> function(moho, params) -> result, err
 local handlers = {}

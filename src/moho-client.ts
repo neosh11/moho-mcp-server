@@ -62,6 +62,14 @@ export class MohoClient {
       throw err;
     }
 
+    // The Lua side runs script.run only while this marker exists.
+    const marker = path.join(ipcDir, "allow_scripts");
+    if (config.moho.allowScripts) {
+      await fs.promises.writeFile(marker, "1", "utf-8");
+    } else {
+      await fs.promises.unlink(marker).catch(() => {});
+    }
+
     this.connected = true;
     startKeepAlive();
     process.stderr.write(

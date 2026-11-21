@@ -113,6 +113,7 @@ local function loadModules(baseDir)
 		{ name = "moho_mcp.tools.animation", methods = { "animation.getKeyframes", "animation.getFrameState", "animation.setKeyframe", "animation.deleteKeyframe", "animation.setInterpolation" } },
 		{ name = "moho_mcp.tools.mesh",      methods = { "mesh.getPoints", "mesh.getShapes" } },
 		{ name = "moho_mcp.tools.batch",     methods = { "batch.execute" } },
+		{ name = "moho_mcp.tools.script",    methods = { "script.run" } },
 	}
 
 	for _, toolDef in ipairs(toolModules) do

@@ -29,6 +29,7 @@ copy /Y "%SRC%\moho_mcp\tools\layer.lua" "%DEST%\moho_mcp\tools\layer.lua"
 copy /Y "%SRC%\moho_mcp\tools\bone.lua" "%DEST%\moho_mcp\tools\bone.lua"
 copy /Y "%SRC%\moho_mcp\tools\animation.lua" "%DEST%\moho_mcp\tools\animation.lua"
 copy /Y "%SRC%\moho_mcp\tools\mesh.lua" "%DEST%\moho_mcp\tools\mesh.lua"
+copy /Y "%SRC%\moho_mcp\tools\script.lua" "%DEST%\moho_mcp\tools\script.lua"
 copy /Y "%SRC%\moho_mcp\tools\batch.lua" "%DEST%\moho_mcp\tools\batch.lua"
 
 echo.
