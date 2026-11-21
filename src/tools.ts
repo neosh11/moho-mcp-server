@@ -833,6 +833,9 @@ export function registerTools(server: McpServer, client: MohoClient): void {
             throw new Error("Pass either code or path");
           }
           await ensureConnected(client);
+          // Another bridge without the permission removes the marker when it
+          // connects; restore it so this enabled bridge keeps working.
+          await fs.promises.writeFile(path.join(config.moho.ipcDir, "allow_scripts"), "1", "utf-8");
           const params: Record<string, unknown> = {};
           if (code) params.code = code;
           if (scriptPath) params.path = scriptPath;
