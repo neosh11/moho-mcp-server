@@ -353,9 +353,11 @@ local function scanRequests()
             end
         end
     end
-    scan(math.max(1, lastId - 20), lastId + 200)
-    if #found == 0 and lastId > 100 then
-        scan(1, 120) -- the bridge restarted
+    local from = math.max(1, lastId - 20)
+    scan(from, lastId + 200)
+    if #found == 0 and from > 1 then
+        -- a reconnected bridge numbers from 1 again, below the window
+        scan(1, math.min(from - 1, 120))
     end
     return found
 end
