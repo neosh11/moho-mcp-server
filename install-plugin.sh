@@ -36,6 +36,7 @@ mkdir -p "$DEST/moho_mcp/tools"
 
 echo "Copying main script and JSON library..."
 cp -f "$SRC/MohoMCP_Server.lua" "$DEST/MohoMCP_Server.lua"
+cp -f "$SRC/MohoMCP_RunJobs.lua" "$DEST/MohoMCP_RunJobs.lua"
 cp -f "$SRC/json.lua" "$DEST/json.lua"
 
 echo "Copying core modules..."

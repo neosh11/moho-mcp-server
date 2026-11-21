@@ -13,7 +13,9 @@
  * ("MohoMCP KeepAlive") reads Moho's Scripts > MohoMCP menu through the
  * Accessibility API ~4 times a second.  Reading the menu makes Moho call the
  * menu script's IsEnabled(), which polls for requests — without bringing
- * Moho to the front.  The applet lives at a stable path so the one-time
+ * Moho to the front.  Renders, which crash Moho when run inside a poll, are
+ * parked by the plugin and run when the applet presses Scripts > MohoMCP >
+ * Run MohoMCP Jobs.  The applet lives at a stable path so the one-time
  * Accessibility / Automation grant survives updates of the bridge, is launched
  * through LaunchServices (so macOS attributes the permission to the applet
  * itself, not to whatever started the bridge) and quits on its own once no
@@ -89,37 +91,72 @@ while ($true) {
 }
 `;
 
-// Bump when MAC_APPLET_SOURCE changes: the applet is rebuilt only then,
-// because rebuilding it resets the user's Accessibility grant.
-const MAC_APPLET_VERSION = "1";
+// The macOS keep-alive is split in two so that changing its logic never
+// invalidates the user's permission grants:
+//  - the applet ("MohoMCP KeepAlive.app") is a tiny stay-open loader. macOS
+//    ties Accessibility/Automation grants to its code signature, so it is
+//    rebuilt only when MAC_APPLET_VERSION changes;
+//  - the worker (keepalive-worker.scpt next to it) holds the logic. The
+//    applet loads it at launch, so a new worker only needs an applet restart.
+const MAC_APPLET_VERSION = "2";
+const MAC_WORKER_VERSION = "1";
 const MAC_APPLET_ID = "dev.moho-mcp.keepalive";
 
-// Stay-open AppleScript applet. State goes to <ipcDir>/keepalive.json so the
-// bridge can tell the user when a permission is missing.
 const MAC_APPLET_SOURCE = String.raw`
-property idleTicks : 0
-property lastState : ""
+property worker : missing value
 
 on run
+	set worker to load script (POSIX file "@@WORKER@@")
+	worker's init()
 end run
+
+on idle
+	try
+		set r to worker's tick()
+	on error
+		return 2
+	end try
+	if r < 0 then
+		quit
+		return 1
+	end if
+	return r
+end idle
+`;
+
+// Called by the applet ~4 times a second. Reading Moho's Scripts > MohoMCP
+// menu makes Moho call the menu script's IsEnabled(), which polls for
+// requests. When the plugin parks a request that must not run inside a poll
+// (a render), it creates <ipcDir>/jobs.pending and the worker presses
+// Scripts > MohoMCP > Run MohoMCP Jobs instead. State goes to
+// <ipcDir>/keepalive.json so the bridge and the plugin can see it.
+const MAC_WORKER_SOURCE = String.raw`
+property idleTicks : 0
+property lastState : ""
+property ipcDir : ""
+
+on init()
+	set ipcDir to (do shell script "getconf DARWIN_USER_TEMP_DIR") & "moho-mcp/"
+	set idleTicks to 0
+	set lastState to ""
+end init
 
 on reportState(s)
 	if s is not lastState then
 		set lastState to s
 		try
-			do shell script "d=\"$(getconf DARWIN_USER_TEMP_DIR)moho-mcp\"; mkdir -p \"$d\"; printf '%s' " & quoted form of s & " > \"$d/keepalive.json\""
+			do shell script "mkdir -p " & quoted form of ipcDir & "; printf '%s' " & quoted form of s & " > " & quoted form of (ipcDir & "keepalive.json")
 		end try
 	end if
 end reportState
 
-on idle
+on tick()
 	set idleTicks to idleTicks + 1
 	if idleTicks mod 20 = 0 then
 		try
 			do shell script "pgrep -f moho-mcp-server >/dev/null"
 		on error
-			quit
-			return 1
+			return -1
 		end try
 	end if
 	try
@@ -128,8 +165,15 @@ on idle
 				my reportState("{\"state\":\"moho-not-running\"}")
 				return 2
 			end if
+			set jobsPending to exists file (ipcDir & "jobs.pending")
 			tell process "Moho"
-				get name of menu items of menu 1 of menu item "MohoMCP" of menu 1 of menu bar item "Scripts" of menu bar 1
+				set m to menu 1 of menu item "MohoMCP" of menu 1 of menu bar item "Scripts" of menu bar 1
+				if jobsPending then
+					try
+						click menu item "Run MohoMCP Jobs" of m
+					end try
+				end if
+				get name of menu items of m
 			end tell
 		end tell
 		my reportState("{\"state\":\"ok\"}")
@@ -138,17 +182,19 @@ on idle
 		return 2
 	end try
 	return 0.25
-end idle
+end tick
 `;
 
+function macSupportDir(): string {
+  return path.join(os.homedir(), "Library", "Application Support", "moho-mcp");
+}
+
 function macAppletPath(): string {
-  return path.join(
-    os.homedir(),
-    "Library",
-    "Application Support",
-    "moho-mcp",
-    "MohoMCP KeepAlive.app",
-  );
+  return path.join(macSupportDir(), "MohoMCP KeepAlive.app");
+}
+
+function macWorkerPath(): string {
+  return path.join(macSupportDir(), "keepalive-worker.scpt");
 }
 
 function run(cmd: string, args: string[]): void {
@@ -158,58 +204,92 @@ function run(cmd: string, args: string[]): void {
   }
 }
 
-/** Build the applet if it is missing or out of date. */
-function ensureMacApplet(): string {
-  const app = macAppletPath();
-  // Kept outside the bundle: writing inside it would break the signature
-  // and with it the Accessibility grant.
-  const marker = `${app}.version`;
-  try {
-    if (fs.readFileSync(marker, "utf-8") === MAC_APPLET_VERSION) {
-      return app;
-    }
-  } catch {
-    // missing or unreadable — (re)build below
-  }
+function stopMacApplet(): void {
+  spawnSync("pkill", ["-f", "MohoMCP KeepAlive.app/Contents/MacOS/"], { stdio: "ignore" });
+}
 
-  fs.mkdirSync(path.dirname(app), { recursive: true });
-  fs.rmSync(app, { recursive: true, force: true });
-  const src = path.join(os.tmpdir(), `moho-mcp-keepalive-${process.pid}.applescript`);
-  fs.writeFileSync(src, MAC_APPLET_SOURCE, "utf-8");
+// Version markers live outside the bundle: writing inside it would break the
+// signature and with it the grants.
+function upToDate(marker: string, version: string): boolean {
   try {
-    run("osacompile", ["-s", "-o", app, src]);
+    return fs.readFileSync(marker, "utf-8") === version;
+  } catch {
+    return false;
+  }
+}
+
+function compileAppleScript(source: string, out: string, extraArgs: string[] = []): void {
+  const src = path.join(os.tmpdir(), `moho-mcp-${process.pid}-${path.basename(out)}.applescript`);
+  fs.writeFileSync(src, source, "utf-8");
+  try {
+    run("osacompile", [...extraArgs, "-o", out, src]);
   } finally {
     fs.rmSync(src, { force: true });
   }
-  const plist = path.join(app, "Contents", "Info.plist");
-  run("plutil", ["-replace", "CFBundleIdentifier", "-string", MAC_APPLET_ID, plist]);
-  run("plutil", ["-replace", "CFBundleName", "-string", "MohoMCP KeepAlive", plist]);
-  run("plutil", ["-replace", "LSUIElement", "-bool", "true", plist]);
-  run("plutil", [
-    "-replace",
-    "NSAppleEventsUsageDescription",
-    "-string",
-    "Reads the Moho menu so the MohoMCP plugin keeps answering requests while Moho is in the background.",
-    plist,
-  ]);
-  // Info.plist changed after osacompile signed it — re-sign ad hoc.
-  run("codesign", ["--force", "--sign", "-", app]);
-  fs.writeFileSync(marker, MAC_APPLET_VERSION, "utf-8");
-  process.stderr.write(`[moho-mcp] Built keep-alive applet at ${app}\n`);
-  return app;
+}
+
+/**
+ * Build the worker and the applet if missing or out of date.
+ * Returns the applet path and whether a running applet must be restarted.
+ */
+function ensureMacApplet(): { app: string; restart: boolean } {
+  const app = macAppletPath();
+  const worker = macWorkerPath();
+  fs.mkdirSync(macSupportDir(), { recursive: true });
+  let restart = false;
+
+  const workerMarker = `${worker}.version`;
+  if (!upToDate(workerMarker, MAC_WORKER_VERSION) || !fs.existsSync(worker)) {
+    const tmp = `${worker}.new`;
+    compileAppleScript(MAC_WORKER_SOURCE, tmp);
+    fs.renameSync(tmp, worker);
+    fs.writeFileSync(workerMarker, MAC_WORKER_VERSION, "utf-8");
+    restart = true;
+    process.stderr.write(`[moho-mcp] Built keep-alive worker at ${worker}\n`);
+  }
+
+  const appMarker = `${app}.version`;
+  if (!upToDate(appMarker, MAC_APPLET_VERSION) || !fs.existsSync(app)) {
+    stopMacApplet();
+    fs.rmSync(app, { recursive: true, force: true });
+    compileAppleScript(MAC_APPLET_SOURCE.replace("@@WORKER@@", worker), app, ["-s"]);
+    const plist = path.join(app, "Contents", "Info.plist");
+    run("plutil", ["-replace", "CFBundleIdentifier", "-string", MAC_APPLET_ID, plist]);
+    run("plutil", ["-replace", "CFBundleName", "-string", "MohoMCP KeepAlive", plist]);
+    run("plutil", ["-replace", "LSUIElement", "-bool", "true", plist]);
+    run("plutil", [
+      "-replace",
+      "NSAppleEventsUsageDescription",
+      "-string",
+      "Reads the Moho menu so the MohoMCP plugin keeps answering requests while Moho is in the background.",
+      plist,
+    ]);
+    // Info.plist changed after osacompile signed it — re-sign ad hoc.
+    run("codesign", ["--force", "--sign", "-", app]);
+    fs.writeFileSync(appMarker, MAC_APPLET_VERSION, "utf-8");
+    restart = false; // nothing of the old applet is running any more
+    process.stderr.write(
+      `[moho-mcp] Built keep-alive applet at ${app}; grant it Accessibility access again\n`,
+    );
+  }
+  return { app, restart };
 }
 
 function startMacKeepAlive(): void {
-  let app: string;
+  let built: { app: string; restart: boolean };
   try {
-    app = ensureMacApplet();
+    built = ensureMacApplet();
   } catch (err) {
     process.stderr.write(`[moho-mcp] Keep-alive applet build failed: ${String(err)}\n`);
     return;
   }
+  if (built.restart) {
+    // The applet loads the worker only at launch.
+    stopMacApplet();
+  }
   // `open` launches through LaunchServices: -g keeps it in the background,
   // -j hides it. Re-opening an already running applet is a no-op.
-  const child = spawn("open", ["-g", "-j", app], { stdio: "ignore" });
+  const child = spawn("open", ["-g", "-j", built.app], { stdio: "ignore" });
   child.on("error", (err) => {
     process.stderr.write(`[moho-mcp] Keep-alive launch failed: ${String(err)}\n`);
   });
@@ -257,6 +337,10 @@ export function keepAliveHint(ipcDir: string): string {
  * No-op on unsupported platforms or if already running.
  */
 export function startKeepAlive(): void {
+  // Never build or launch the real applet from the test suite.
+  if (process.env.VITEST) {
+    return;
+  }
   const platform = os.platform();
   if (platform === "darwin") {
     if (!macKeepAliveStarted) {

@@ -15,6 +15,7 @@ mkdir "%DEST%\moho_mcp\tools" 2>NUL
 
 echo Copying main script and JSON library...
 copy /Y "%SRC%\MohoMCP_Server.lua" "%DEST%\MohoMCP_Server.lua"
+copy /Y "%SRC%\MohoMCP_RunJobs.lua" "%DEST%\MohoMCP_RunJobs.lua"
 copy /Y "%SRC%\json.lua" "%DEST%\json.lua"
 
 echo Copying core modules...
