@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
 import { parseResponse } from "./protocol.js";
-import { startKeepAlive, stopKeepAlive } from "./keep-alive.js";
+import { keepAliveHint, startKeepAlive, stopKeepAlive } from "./keep-alive.js";
 
 // ---------------------------------------------------------------------------
 // MohoClient
@@ -157,7 +157,8 @@ export class MohoClient {
             await fs.promises.unlink(reqPath).catch(() => {});
             throw new Error(
               `Request ${method} (id=${id}) timed out after ${timeout}ms. ` +
-              "Is the MOHO MCP server running and polling?",
+              "Is the MOHO MCP server running and polling?" +
+                keepAliveHint(ipcDir),
             );
           }
 
