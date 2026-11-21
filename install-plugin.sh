@@ -4,16 +4,32 @@ echo " MohoMCP Plugin Installer (macOS)"
 echo "============================================"
 echo ""
 
-DEST="/Applications/Moho 14/Moho Pro.app/Contents/Resources/Support/Scripts/Menu/MohoMCP"
-TOOL_DEST="/Applications/Moho 14/Moho Pro.app/Contents/Resources/Support/Scripts/Tool"
+set -e
+
+# Where to install. Preference order:
+#   1. MOHO_SCRIPTS env var (path to a ".../Scripts" folder)
+#   2. Moho Pro's custom content folder (EditableFilesDir in user settings)
+#   3. Scripts folder inside /Applications/Moho.app (macOS may block writes here)
+SETTINGS="$HOME/Library/Preferences/Lost Marble/Moho Pro/14/Moho Pro14.user.settings"
+if [ -z "$MOHO_SCRIPTS" ] && [ -f "$SETTINGS" ]; then
+    CONTENT_DIR="$(grep -a '^"EditableFilesDir"' "$SETTINGS" | sed -E 's/^"EditableFilesDir"[[:space:]]+"(.*)"$/\1/')"
+    if [ -n "$CONTENT_DIR" ] && [ -d "$CONTENT_DIR/Scripts" ]; then
+        MOHO_SCRIPTS="$CONTENT_DIR/Scripts"
+    fi
+fi
+SCRIPTS="${MOHO_SCRIPTS:-/Applications/Moho.app/Contents/Resources/Support/Scripts}"
+DEST="$SCRIPTS/Menu/MohoMCP"
+TOOL_DEST="$SCRIPTS/Tool"
 SRC="$(cd "$(dirname "$0")" && pwd)/moho-plugin"
 
-# Check if Moho is installed
-if [ ! -d "/Applications/Moho 14" ]; then
-    echo "ERROR: Moho 14 not found at /Applications/Moho 14/"
-    echo "Please update the DEST and TOOL_DEST paths in this script."
+if [ ! -d "$SCRIPTS/Menu" ] || [ ! -f "$TOOL_DEST/_tool_list.txt" ]; then
+    echo "ERROR: Moho scripts folder not found at $SCRIPTS"
+    echo "Set MOHO_SCRIPTS to your Moho Scripts folder, e.g.:"
+    echo "  MOHO_SCRIPTS=\"\$HOME/Documents/Moho Pro/Scripts\" ./install-plugin.sh"
     exit 1
 fi
+echo "Installing into: $SCRIPTS"
+echo ""
 
 echo "Creating directories..."
 mkdir -p "$DEST/moho_mcp/tools"
